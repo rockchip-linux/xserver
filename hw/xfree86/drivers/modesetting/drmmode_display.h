@@ -32,6 +32,7 @@
 #include "libudev.h"
 #endif
 
+#include "exa.h"
 #include "dumb_bo.h"
 
 struct gbm_device;
@@ -77,8 +78,20 @@ typedef struct {
 #ifdef GLAMOR_HAS_GBM
     Bool used_modifiers;
     struct gbm_bo *gbm;
+    Bool owned_gbm;
 #endif
 } drmmode_bo;
+
+enum drmmode_fb_flip_mode {
+    DRMMODE_FB_FLIP_NONE,
+    DRMMODE_FB_FLIP_TRANSFORMED,
+    DRMMODE_FB_FLIP_ALWAYS
+};
+
+typedef struct {
+    ExaDriverPtr driver;
+    void *priv;
+} drmmode_exa;
 
 typedef struct {
     int fd;
@@ -102,6 +115,8 @@ typedef struct {
     OptionInfoPtr Options;
 
     Bool glamor;
+    drmmode_exa *exa;
+
     Bool shadow_enable;
     Bool shadow_enable2;
     /** Is Option "PageFlip" enabled? */
@@ -110,6 +125,10 @@ typedef struct {
     void *shadow_fb;
     void *shadow_fb2;
 
+    Bool hotplug_reset;
+
+    enum drmmode_fb_flip_mode fb_flip_mode;
+
     DevPrivateKeyRec pixmapPrivateKeyRec;
 
     Bool reverse_prime_offload_mode;
@@ -117,6 +136,12 @@ typedef struct {
     Bool is_secondary;
 
     PixmapPtr fbcon_pixmap;
+
+    const char *dri2_device_name;
+
+#ifdef DRI3
+    char *dri3_device_name;
+#endif
 
     Bool dri2_flipping;
     Bool present_flipping;
@@ -151,6 +176,16 @@ typedef struct {
 } drmmode_format_rec, *drmmode_format_ptr;
 
 typedef struct {
+    drmmode_bo bo;
+    unsigned fb_id;
+
+    PixmapPtr pixmap;
+    DamagePtr damage;
+
+    Bool need_clear;
+} drmmode_fb;
+
+typedef struct {
     drmmode_ptr drmmode;
     drmModeCrtcPtr mode_crtc;
     uint32_t vblank_pipe;
@@ -169,6 +204,15 @@ typedef struct {
     drmmode_bo rotate_bo;
     unsigned rotate_fb_id;
 
+    /** support fb flipping to avoid tearing */
+    unsigned fb_id;
+    drmmode_fb flip_fb[2];
+    unsigned current_fb;
+    uint64_t flipping_time_ms; /* time of the latest fb flipping */
+    Bool can_flip_fb;
+    Bool flip_fb_enabled;
+    Bool flipping;
+
     PixmapPtr prime_pixmap;
     PixmapPtr prime_pixmap_back;
     unsigned prime_pixmap_x;
@@ -184,11 +228,14 @@ typedef struct {
     uint64_t msc_high;
     /** @} */
 
+    xf86OutputStatus output_status;
+
     Bool need_modeset;
     struct xorg_list mode_list;
 
     Bool enable_flipping;
     Bool flipping_active;
+    Bool is_scale;
 } drmmode_crtc_private_rec, *drmmode_crtc_private_ptr;
 
 typedef struct {
@@ -212,6 +259,7 @@ typedef struct {
     drmmode_prop_info_rec props_connector[DRMMODE_CONNECTOR__COUNT];
     int enc_mask;
     int enc_clone_mask;
+    int possible_crtcs;
     xf86CrtcPtr current_crtc;
 } drmmode_output_private_rec, *drmmode_output_private_ptr;
 
@@ -284,5 +332,11 @@ void drmmode_copy_fb(ScrnInfoPtr pScrn, drmmode_ptr drmmode);
 int drmmode_crtc_flip(xf86CrtcPtr crtc, uint32_t fb_id, uint32_t flags, void *data);
 
 void drmmode_set_dpms(ScrnInfoPtr scrn, int PowerManagementMode, int flags);
+
+Bool drmmode_flip_fb(xf86CrtcPtr crtc, int *timeout);
+
+PixmapPtr drmmode_create_pixmap_header(ScreenPtr pScreen, int width, int height,
+                                       int depth, int bitsPerPixel, int devKind,
+                                       void *pPixData);
 
 #endif
